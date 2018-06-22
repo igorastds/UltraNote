@@ -90,7 +90,7 @@ namespace CryptoNote {
   };
 
   using CryptoNote::BlockInfo;
-
+  std::unordered_set<Crypto::Hash> m_validated_transactions;
   //---------------------------------------------------------------------------------
   tx_memory_pool::tx_memory_pool(
     const CryptoNote::Currency& currency, 
