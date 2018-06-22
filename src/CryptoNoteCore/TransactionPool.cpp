@@ -283,9 +283,15 @@ namespace CryptoNote {
     std::unordered_set<Crypto::Hash> ready_tx_ids;
     for (const auto& tx : m_transactions) {
       TransactionCheckInfo checkInfo(tx);
-      if (is_transaction_ready_to_go(tx.tx, checkInfo)) {
-        ready_tx_ids.insert(tx.id);
-      }
+     if (m_validated_transactions.find(tx.id) != m_validated_transactions.end()) {
+		  ready_tx_ids.insert(tx.id);
+		  logger(DEBUGGING) << "MemPool - tx " << tx.id << " loaded from cache";
+	  }
+	  else if (is_transaction_ready_to_go(tx.tx, checkInfo)) {
+		  ready_tx_ids.insert(tx.id);
+		  m_validated_transactions.insert(tx.id);
+		  logger(DEBUGGING) << "MemPool - tx " << tx.id << " added to cache";
+	  }
     }
 
     std::unordered_set<Crypto::Hash> known_set(known_tx_ids.begin(), known_tx_ids.end());
@@ -305,11 +311,23 @@ namespace CryptoNote {
   }
   //---------------------------------------------------------------------------------
   bool tx_memory_pool::on_blockchain_inc(uint64_t new_block_height, const Crypto::Hash& top_block_id) {
-    return true;
+	  std::lock_guard<std::recursive_mutex> lock(m_transactions_lock);
+    if (!m_validated_transactions.empty()) {
+      logger(DEBUGGING) << "MemPool - Block height incremented, cleared " << m_validated_transactions.size() << " cached transaction hashes. New height: " << new_block_height << " Top block: " << top_block_id;
+      m_validated_transactions.clear();
+	}
+
+	  return true;
   }
   //---------------------------------------------------------------------------------
   bool tx_memory_pool::on_blockchain_dec(uint64_t new_block_height, const Crypto::Hash& top_block_id) {
-    return true;
+	   std::lock_guard<std::recursive_mutex> lock(m_transactions_lock);
+    if (!m_validated_transactions.empty()) {
+      logger(DEBUGGING, YELLOW) << "MemPool - Block height decremented " << m_validated_transactions.size() << " cached transaction hashes. New height: " << new_block_height << " Top block: " << top_block_id;
+      m_validated_transactions.clear();
+	}
+
+	  return true;
   }
   //---------------------------------------------------------------------------------
   bool tx_memory_pool::have_tx(const Crypto::Hash &id) const {
@@ -419,7 +437,16 @@ namespace CryptoNote {
       }
 
       TransactionCheckInfo checkInfo(txd);
-      bool ready = is_transaction_ready_to_go(txd.tx, checkInfo);
+      bool ready = false;
+	  if (m_validated_transactions.find(txd.id) != m_validated_transactions.end()) {
+		  ready = true;
+		  logger(DEBUGGING) << "Fill block template - tx added from cache: " << txd.id;
+	  }
+	  else if (is_transaction_ready_to_go(txd.tx, checkInfo)) {
+		  ready = true;
+		  m_validated_transactions.insert(txd.id);
+		  logger(DEBUGGING) << "Fill block template - tx added to cache: " << txd.id;
+	  }
 
       // update item state
       m_fee_index.modify(i, [&checkInfo](TransactionCheckInfo& item) {
@@ -582,6 +609,10 @@ namespace CryptoNote {
     m_paymentIdIndex.remove(i->tx);
     m_timestampIndex.remove(i->receiveTime, i->id);
     m_ttlIndex.erase(i->id);
+	   if (m_validated_transactions.find(i->id) != m_validated_transactions.end()) {
+      m_validated_transactions.erase(i->id);
+      logger(DEBUGGING) << "Removing transaction from MemPool cache " << i->id << ". Cache size: " << m_validated_transactions.size();
+    }
     return m_transactions.erase(i);
   }
 
